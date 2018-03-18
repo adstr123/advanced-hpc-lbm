@@ -1,0 +1,7 @@
+initial (MPI Initialised)
+	- Reynolds number:                9.753865242004E+00
+	- Elapsed time:                   28.521647 (s)
+	- Elapsed user CPU time:          28.518234 (s)
+	- Elapsed system CPU time:        0.007999 (s)
+
+	
