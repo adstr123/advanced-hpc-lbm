@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 
 import sys
+import datetime
 
 # Check for python version - requires 2.7 (and not 3)
 if sys.version_info[:2] != (2,7):
@@ -74,11 +75,15 @@ av_vels_sim, final_state_sim = load_dat_files(parsed_args.av_vels_file[0], parse
 # Make sure the coordinates are in the right order
 if np.any(final_state_ref[:,0:2] != final_state_sim[:,0:2]):
     print "Final state files coordinates were not the same"
+    with open("check_log.txt", "a") as log:
+	log.write("Final state files coordinates were not the same\n")
     exit(1)
 
 # Make sure the av_vels have the same number of steps
 if av_vels_ref.size != av_vels_sim.size:
     print "Different number of steps in av_vels files"
+    with open("check_log.txt", "a") as log:
+	log.write("Different number of steps in av_vels files\n")
     exit(1)
 
 def get_diff_values(ref_vals, sim_vals):
@@ -102,6 +107,8 @@ def get_diff_values(ref_vals, sim_vals):
 def print_diffs(format_strings, format_dict):
     for s in format_strings:
         print s.format(**format_dict)
+	with open("check_log.txt", "a") as log:
+            log.write(s.format(**format_dict) + "\n")
 
 av_vels_diffs = get_diff_values(av_vels_ref, av_vels_sim)
 av_vels_strings = [
@@ -136,13 +143,20 @@ av_vels_failed = (not np.isfinite(av_vels_diffs["max_diff_pcnt"])) or (np.abs(av
 
 if final_state_failed:
     print "final state failed check"
+    with open("check_log.txt", "a") as log:
+	log.write("final state failed check\n\n")
 if av_vels_failed:
     print "av_vels failed check"
+    with open("check_log.txt", "a") as log:
+        log.write("av_vels failed check\n\n")
 
 # Return 1 on failure
 if final_state_failed or av_vels_failed:
     exit(1)
 else:
     print "Both tests passed!"
+    with open("check_log.txt", "a") as log:
+	log.write("Both tests passed!\n")
+	log.write(str(datetime.datetime.now()) + "\n\n")
     exit(0)
 
