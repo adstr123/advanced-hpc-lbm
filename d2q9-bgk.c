@@ -57,6 +57,12 @@
 #include <sys/resource.h> /* angle brackets: standard library header file (searches dirs pre-designated by compiler/IDE first) */
 #include "mpi.h"          /* quotes: programmer-defined header file (searches this dir first, then same as <>) */
 
+/* define debug variables */
+/* #define DEBUG              included */
+/* #define DEBUG_localNy      prints local_ny var: no. of cells in y-direction in decomposed grid */
+/* #define DEBUG_mainGridV    prints main grid (*cells_ptr) values after initialisation */
+ #define DEBUG_mainGrid     /*prints only main grid (*cells_ptr) size after initialisation */
+
 #define NSPEEDS         9
 /* output files for error checking in check.py */
 #define FINALSTATEFILE  "final_state.dat"
@@ -193,11 +199,11 @@ int main(int argc, char* argv[])
   {
     timestep(params, cells, tmp_cells, obstacles);
     av_vels[tt] = av_velocity(params, cells, obstacles);
-    #ifdef DEBUG
-    printf("==timestep: %d==\n", tt);
-    printf("av velocity: %.12E\n", av_vels[tt]);
-    printf("tot density: %.12E\n", total_density(params, cells));
-    #endif
+    /* #ifdef DEBUG
+    ** printf("==timestep: %d==\n", tt);
+    ** printf("av velocity: %.12E\n", av_vels[tt]);
+    ** printf("tot density: %.12E\n", total_density(params, cells));
+    ** #endif */
   }
 
   /* MPI alterations
@@ -235,7 +241,7 @@ int main(int argc, char* argv[])
   ** int send_count
   ** MPI_Datatype send_datatype,
   ** void* recv_data,
-  ** int recv_count,                /* count of elements received per process, not total elements received
+  ** int recv_count,                // count of elements received per process, not total elements received
   ** MPI_Datatype recv_datatype,
   ** int root,
   ** MPI_Comm communicator
@@ -267,6 +273,9 @@ int initialise(const char* paramfile, const char* obstaclefile,
   int    xx, yy;         /* generic array indices */
   int    blocked;        /* indicates whether a cell is blocked by an obstacle */
   int    retval;         /* to hold return value for checking */
+
+  /* MPI_vars */
+  int local_ny;          /* no. of cells in y-direction in decomposed grid */
 
   /* open the parameter file */
   fp = fopen(paramfile, "r");
@@ -334,10 +343,13 @@ int initialise(const char* paramfile, const char* obstaclefile,
   */
 
   /* split rows by number of processors local_ny */
-  
+  local_ny = params->ny / MPI_COMM_WORLD;
+  #ifdef DEBUG_localNy
+  printf("local_ny: no. of cells in y-direction in decomposed grid  %d\n", local_ny);
+  #endif
 
   /* Main Grid */
-  /* +2 for halo paramsny -> local_ny */
+  /* +2 to params->ny for halo rows... use local_ny */
 
   /* Main grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
   *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
@@ -345,7 +357,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   if (*cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
   /* Helper grid, used as scratch space */
-  /* +2 for halo exchange */
+  /* +2 to params->ny for halo rows... use local_ny */
 
   /* Helper grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
   *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
@@ -353,7 +365,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   if (*tmp_cells_ptr == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
 
   /* the map of obstacles */
-  /* change to local_ny, but doesn't require +2 for halos */
+  /* use local_ny, but doesn't require +2 for halos */
 
   /* Obstacle map size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of int */
   *obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
@@ -391,6 +403,24 @@ int initialise(const char* paramfile, const char* obstaclefile,
       (*cells_ptr)[ii + jj*params->nx].speeds[8] = w2;
     }
   }
+
+  #ifdef DEBUG_mainGrid
+  int count = 0;
+  printf("Printing main grid:\n");
+  for (int jj = 0; jj < params->ny; jj++) {
+    for (int ii = 0; ii < params->nx; ii++) {
+      for (int ss = 0; ss < 9; ss++) {
+        #ifdef DEBUG_mainGridV
+        printf("%.2f", (*cells_ptr)[ii + jj].speeds[ss]);
+        #endif
+        count++;
+      }
+    }
+  }
+  printf("Main grid length should be 9 * N^2\n")
+  printf("OR 9 * (N+2) * N if halo is active")
+  printf("Main grid length: %d\n", count);
+  #endif
 
   /* first set all cells in obstacle array to zero */
   /* can merge above, use local_ny */
@@ -437,14 +467,14 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* scatter array */
   /*  
   ** MPI_Scatter (
-  ** void* send_data,               /* array of data residing on MASTER
-  ** int send_count                 /* how many elements will be sent to each process? Often # elements in an array / num_proc
-  ** MPI_Datatype send_datatype,    /* what MPI datatype will those elements be
-  ** void* recv_data,               /* buffer holds recv_count number of elements of type recv_datatype
+  ** void* send_data,                array of data residing on MASTER
+  ** int send_count                  how many elements will be sent to each process? Often # elements in an array / num_proc
+  ** MPI_Datatype send_datatype,     what MPI datatype will those elements be
+  ** void* recv_data,                buffer holds recv_count number of elements of type recv_datatype
   ** int recv_count,
   ** MPI_Datatype recv_datatype,
-  ** int root,                      /* root process scattering the array (MASTER)
-  ** MPI_Comm communicator          /* communicator in which these processes reside
+  ** int root,                       root process scattering the array (MASTER)
+  ** MPI_Comm communicator           communicator in which these processes reside
   ** )
   */
 
