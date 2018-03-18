@@ -27,7 +27,7 @@
 ** | A | B | C | D | E | F |
 **  --- --- --- --- --- ---
 **
-** Grid indicies are:
+** Grid indices are:
 **
 **          ny
 **          ^       cols(ii)
@@ -118,7 +118,6 @@ int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr
              int** obstacles_ptr, float** av_vels_ptr);
 
 /* utility functions */
-int calc_nrows_from_rank(int rank, int size);
 void die(const char* message, const int line, const char* file);
 void usage(const char* exe);
 
@@ -227,6 +226,21 @@ int main(int argc, char* argv[])
   **   WRITE VALUES
   ** }
   */
+  /*  
+  ** Inverse MPI_Scatter
+  ** Only root process needs to have valid receive buffer
+  ** All other calling processes can pass NULL for recv_data
+  ** MPI_Gather (
+  ** void* send_data,
+  ** int send_count
+  ** MPI_Datatype send_datatype,
+  ** void* recv_data,
+  ** int recv_count,                /* count of elements received per process, not total elements received
+  ** MPI_Datatype recv_datatype,
+  ** int root,
+  ** MPI_Comm communicator
+  ** )
+  */
 
   /* write final values and free memory */
   printf("==done==\n");
@@ -295,18 +309,6 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* and close up the file */
   fclose(fp);
 
-  /* 
-  ** dermine local grid size
-  ** row-major decomposition, therefore:
-  ** each rank gets all the columns, subset of rows
-  **           cols
-  **       --- --- ---
-  **      | D | E | F |   DEF = rank (all cols, top row)
-  ** rows  --- --- ---
-  **      | A | B | C |   ABC = rank (all cols, bot row)
-  **       --- --- ---
-  */
-
   /*
   ** Allocate memory.
   **
@@ -332,21 +334,28 @@ int initialise(const char* paramfile, const char* obstaclefile,
   */
 
   /* split rows by number of processors local_ny */
+  
 
-  /* main grid */
+  /* Main Grid */
   /* +2 for halo paramsny -> local_ny */
+
+  /* Main grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
   *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
 
   if (*cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
-  /* 'helper' grid, used as scratch space */
+  /* Helper grid, used as scratch space */
   /* +2 for halo exchange */
+
+  /* Helper grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
   *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
 
   if (*tmp_cells_ptr == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
 
   /* the map of obstacles */
-  /* change to local but doesn't require halos */
+  /* change to local_ny, but doesn't require +2 for halos */
+
+  /* Obstacle map size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of int */
   *obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
@@ -354,15 +363,16 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* change indexing for halo exchange
   ** - set boundary conditions
   ** - init inner cells to average of boundary cells???
-  ** modify looping bounds to accomodate halo rows
+  ** modify looping bounds to accommodate halo rows
   */
+
   /* initialise densities */
   float w0 = params->density * 4.f / 9.f;
   float w1 = params->density      / 9.f;
   float w2 = params->density      / 36.f;
 
-  /* change loop boundaries ny -> localny */
-  for (int jj = 0; jj < params->ny; jj++) /* row */
+  /* change loop boundaries ny -> local_ny */
+  for (int jj = 0; jj < params->ny; jj++)   /* row */
   {
     for (int ii = 0; ii < params->nx; ii++) /* cols */
     {
@@ -383,7 +393,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   }
 
   /* first set all cells in obstacle array to zero */
-  /* can merge abov */
+  /* can merge above, use local_ny */
   for (int jj = 0; jj < params->ny; jj++)
   {
     for (int ii = 0; ii < params->nx; ii++)
@@ -392,7 +402,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
     }
   }
 
-  /* only if master */
+  /* only if master??? */
   /* open the obstacle data file */
   fp = fopen(obstaclefile, "r");
 
@@ -415,6 +425,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
     if (blocked != 1) die("obstacle blocked value should be 1", __LINE__, __FILE__);
 
     /* assign to array */
+    /* total_obstacles ptr? */
     (*obstacles_ptr)[xx + yy*params->nx] = blocked;
   }
 
@@ -424,6 +435,18 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   /* scatter to other processes */
   /* scatter array */
+  /*  
+  ** MPI_Scatter (
+  ** void* send_data,               /* array of data residing on MASTER
+  ** int send_count                 /* how many elements will be sent to each process? Often # elements in an array / num_proc
+  ** MPI_Datatype send_datatype,    /* what MPI datatype will those elements be
+  ** void* recv_data,               /* buffer holds recv_count number of elements of type recv_datatype
+  ** int recv_count,
+  ** MPI_Datatype recv_datatype,
+  ** int root,                      /* root process scattering the array (MASTER)
+  ** MPI_Comm communicator          /* communicator in which these processes reside
+  ** )
+  */
 
   /*
   ** allocate space to hold a record of the avarage velocities computed
@@ -814,19 +837,6 @@ int finalise(const t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr
   *av_vels_ptr = NULL;
 
   return EXIT_SUCCESS;
-}
-
-int calc_nrows_from_rank(int rank, int size)
-{
-  int nrows;
-
-  nrows = NROWS / size;       /* integer division */
-  if ((NROWS % size) != 0) {  /* if there is a remainder... */
-    if (rank == size - 1)
-      nrows += NROWS % size;  /* ... make sure we add remainder to last rank */
-  }
-
-  return nrows;
 }
 
 void die(const char* message, const int line, const char* file)
