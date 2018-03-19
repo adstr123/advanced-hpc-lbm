@@ -58,10 +58,10 @@
 #include "mpi.h"          /* quotes: programmer-defined header file (searches this dir first, then same as <>) */
 
 /* define debug variables */
-/* #define DEBUG              included */
-/* #define DEBUG_localNy      prints local_ny var: no. of cells in y-direction in decomposed grid */
-/* #define DEBUG_mainGridV    prints main grid (*cells_ptr) values after initialisation */
- #define DEBUG_mainGrid     /*prints only main grid (*cells_ptr) size after initialisation */
+/* #define DEBUG               included */
+ #define DEBUG_localNy      /* prints local_ny var: no. of cells in y-direction in decomposed grid */
+/* #define DEBUG_mainGridV     prints main grid (*cells_ptr) values after initialisation */
+ #define DEBUG_mainGrid     /* prints only main grid (*cells_ptr) size after initialisation */
 
 #define NSPEEDS         9
 /* output files for error checking in check.py */
@@ -93,7 +93,7 @@ typedef struct
 /* load params, allocate memory, load obstacles & initialise fluid particle densities */
 int initialise(const char* paramfile, const char* obstaclefile,
                t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr,
-               int** obstacles_ptr, float** av_vels_ptr);
+               int** obstacles_ptr, float** av_vels_ptr, int size);
 
 /*
 ** The main calculation methods.
@@ -187,7 +187,7 @@ int main(int argc, char* argv[])
   MPI_Comm_rank( MPI_COMM_WORLD, &rank );
 
   /* initialise our data structures and load values from file */
-  initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels);
+  initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels, size);
 
   /* begin timing pre-execution */
   gettimeofday(&timstr, NULL);
@@ -266,7 +266,7 @@ int main(int argc, char* argv[])
 
 int initialise(const char* paramfile, const char* obstaclefile,
                t_param* params, t_speed** cells_ptr, t_speed** tmp_cells_ptr,
-               int** obstacles_ptr, float** av_vels_ptr)
+               int** obstacles_ptr, float** av_vels_ptr, int size)
 {
   char   message[1024];  /* message buffer */
   FILE*  fp;             /* file pointer */
@@ -343,8 +343,9 @@ int initialise(const char* paramfile, const char* obstaclefile,
   */
 
   /* split rows by number of processors local_ny */
-  local_ny = params->ny / MPI_COMM_WORLD;
+  local_ny = params->ny / size;
   #ifdef DEBUG_localNy
+  printf("# of ranks in world: %d\n", size);
   printf("local_ny: no. of cells in y-direction in decomposed grid  %d\n", local_ny);
   #endif
 
@@ -352,7 +353,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* +2 to params->ny for halo rows... use local_ny */
 
   /* Main grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
-  *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
+  *cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
   if (*cells_ptr == NULL) die("cannot allocate memory for cells", __LINE__, __FILE__);
 
@@ -360,7 +361,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* +2 to params->ny for halo rows... use local_ny */
 
   /* Helper grid size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of t_speed struct */
-  *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * (params->ny * params->nx));
+  *tmp_cells_ptr = (t_speed*)malloc(sizeof(t_speed) * ((local_ny + 2) * params->nx));
 
   if (*tmp_cells_ptr == NULL) die("cannot allocate memory for tmp_cells", __LINE__, __FILE__);
 
@@ -368,7 +369,7 @@ int initialise(const char* paramfile, const char* obstaclefile,
   /* use local_ny, but doesn't require +2 for halos */
 
   /* Obstacle map size = size of (no. of cells in y-direction * no. of cells in x-direction) * size of int */
-  *obstacles_ptr = malloc(sizeof(int) * (params->ny * params->nx));
+  *obstacles_ptr = malloc(sizeof(int) * (local_ny * params->nx));
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
 
@@ -384,30 +385,30 @@ int initialise(const char* paramfile, const char* obstaclefile,
   float w2 = params->density      / 36.f;
 
   /* change loop boundaries ny -> local_ny */
-  for (int jj = 0; jj < params->ny; jj++)   /* row */
+  for (int jj = 0; jj < local_ny; jj++)   /* row */
   {
     for (int ii = 0; ii < params->nx; ii++) /* cols */
     {
       /* centre */
-      /* +1 to jj before adding with ii and multiplying */
-      (*cells_ptr)[ii + jj*params->nx].speeds[0] = w0;
+      /* +1 to jj before adding with ii and multiplying, to account for top halo */
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[0] = w0;
       /* axis directions */
-      (*cells_ptr)[ii + jj*params->nx].speeds[1] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[2] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[3] = w1;
-      (*cells_ptr)[ii + jj*params->nx].speeds[4] = w1;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[1] = w1;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[2] = w1;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[3] = w1;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[4] = w1;
       /* diagonals */
-      (*cells_ptr)[ii + jj*params->nx].speeds[5] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[6] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[7] = w2;
-      (*cells_ptr)[ii + jj*params->nx].speeds[8] = w2;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[5] = w2;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[6] = w2;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[7] = w2;
+      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[8] = w2;
     }
   }
 
   #ifdef DEBUG_mainGrid
   int count = 0;
   printf("Printing main grid:\n");
-  for (int jj = 0; jj < params->ny; jj++) {
+  for (int jj = 0; jj < local_ny+2; jj++) {
     for (int ii = 0; ii < params->nx; ii++) {
       for (int ss = 0; ss < 9; ss++) {
         #ifdef DEBUG_mainGridV
@@ -417,14 +418,14 @@ int initialise(const char* paramfile, const char* obstaclefile,
       }
     }
   }
-  printf("Main grid length should be 9 * N^2\n")
-  printf("OR 9 * (N+2) * N if halo is active")
-  printf("Main grid length: %d\n", count);
+  printf("Main grid length should be 9 * N^2\n");
+  printf("...OR 9 * (N+(size*2)) * N if halo is active\n");
+  printf("Main grid length: %d\n", 4*count);
   #endif
 
   /* first set all cells in obstacle array to zero */
   /* can merge above, use local_ny */
-  for (int jj = 0; jj < params->ny; jj++)
+  for (int jj = 0; jj < local_ny; jj++)
   {
     for (int ii = 0; ii < params->nx; ii++)
     {
