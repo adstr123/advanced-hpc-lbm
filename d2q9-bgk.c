@@ -58,10 +58,15 @@
 #include "mpi.h"          /* quotes: programmer-defined header file (searches this dir first, then same as <>) */
 
 /* define debug variables */
-/* #define DEBUG               included */
- #define DEBUG_localNy      /* prints local_ny var: no. of cells in y-direction in decomposed grid */
-/* #define DEBUG_mainGridV     prints main grid (*cells_ptr) values after initialisation */
- #define DEBUG_mainGrid     /* prints only main grid (*cells_ptr) size after initialisation */
+/* #define DEBUG                    included */
+/* #define DEBUG_localNy            prints local_ny var: no. of cells in y-direction in decomposed grid */
+/* #define DEBUG_mainGridV          prints main grid (*cells_ptr) values after initialisation */
+/* #define DEBUG_mainGrid           prints only main grid (*cells_ptr) size after initialisation */
+/* #define DEBUG_obstacleGrid       prints onstacle grid (*obstacle_ptr) values */
+/* #define DEBUG_init_checkpoints   prints checkpoints during initialise() execution */
+
+/* macro to get size of an array */
+#define NELEMS(x)  (sizeof(x) / sizeof((x)[0]))
 
 #define NSPEEDS         9
 /* output files for error checking in check.py */
@@ -188,6 +193,8 @@ int main(int argc, char* argv[])
 
   /* initialise our data structures and load values from file */
   initialise(paramfile, obstaclefile, &params, &cells, &tmp_cells, &obstacles, &av_vels, size);
+
+  printf("\n\n\nINITIALISATION SUCCESSFUL\n\n\n");
 
   /* begin timing pre-execution */
   gettimeofday(&timstr, NULL);
@@ -373,35 +380,39 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
   if (*obstacles_ptr == NULL) die("cannot allocate column memory for obstacles", __LINE__, __FILE__);
 
+  /* allocate space to hold a record of the avarage velocities computed at each timestep */
+  *av_vels_ptr = (float*)malloc(sizeof(float) * params->maxIters);
+
   /* change indexing for halo exchange
   ** - set boundary conditions
   ** - init inner cells to average of boundary cells???
   ** modify looping bounds to accommodate halo rows
   */
 
-  /* initialise densities */
+  /* initialise densities for present time (w) */
   float w0 = params->density * 4.f / 9.f;
   float w1 = params->density      / 9.f;
   float w2 = params->density      / 36.f;
 
   /* change loop boundaries ny -> local_ny */
-  for (int jj = 0; jj < local_ny; jj++)   /* row */
+  /* +1 to jj before adding with ii and multiplying, to account for top halo */
+  /* change < to <=, to account for bottom halo */
+  for (int jj = 1; jj <= local_ny; jj++)   /* row */
   {
     for (int ii = 0; ii < params->nx; ii++) /* cols */
     {
       /* centre */
-      /* +1 to jj before adding with ii and multiplying, to account for top halo */
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[0] = w0;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[0] = w0;
       /* axis directions */
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[1] = w1;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[2] = w1;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[3] = w1;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[4] = w1;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[1] = w1;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[2] = w1;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[3] = w1;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[4] = w1;
       /* diagonals */
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[5] = w2;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[6] = w2;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[7] = w2;
-      (*cells_ptr)[ii + (jj+1)*params->nx].speeds[8] = w2;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[5] = w2;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[6] = w2;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[7] = w2;
+      (*cells_ptr)[ii + (jj)*params->nx].speeds[8] = w2;
     }
   }
 
@@ -433,7 +444,24 @@ int initialise(const char* paramfile, const char* obstaclefile,
     }
   }
 
-  /* only if master??? */
+  #ifdef DEBUG_obstacleGrid
+  int count2 = 0;
+  printf("Printing obstacle grid:\n");
+  for (int jj = 0; jj < local_ny; jj++) {
+    for (int ii = 0; ii < params->nx; ii++) {
+        printf("%d", (*obstacles_ptr)[ii + jj]);
+        count2++;
+    }
+  }
+  printf("Obstacle grid length: %d\n", count2);
+  #endif
+
+  #ifdef DEBUG_init_checkpoints
+  int rank;
+  MPI_Comm_rank( MPI_COMM_WORLD, &rank );
+  printf("Rank %d Checkpoint0\n", rank);
+  #endif
+
   /* open the obstacle data file */
   fp = fopen(obstaclefile, "r");
 
@@ -443,7 +471,12 @@ int initialise(const char* paramfile, const char* obstaclefile,
     die(message, __LINE__, __FILE__);
   }
 
+  #ifdef DEBUG_init_checkpoints
+  printf("Rank %d Checkpoint01\n", rank);
+  #endif
+
   /* read-in the blocked cells list */
+  int count = 0;
   while ((retval = fscanf(fp, "%d %d %d\n", &xx, &yy, &blocked)) != EOF)
   {
     /* some checks */
@@ -455,17 +488,24 @@ int initialise(const char* paramfile, const char* obstaclefile,
 
     if (blocked != 1) die("obstacle blocked value should be 1", __LINE__, __FILE__);
 
+    #ifdef DEBUG_init_checkpoints
+    printf("Rank %d Checkpoint02. Count %d\n", rank, count);
+    count++;
+    #endif
+
     /* assign to array */
-    /* total_obstacles ptr? */
-    (*obstacles_ptr)[xx + yy*params->nx] = blocked;
+    (*obstacles_ptr)[xx + yy*local_ny] = blocked;
+    /* total_obstacles_ptr goes here for Scatter() */
   }
+
+  #ifdef DEBUG_init_checkpoints
+  printf("Rank %d Checkpoint10\n", rank);
+  #endif
 
   /* and close the file */
   fclose(fp);
-  /* end if master */
 
-  /* scatter to other processes */
-  /* scatter array */
+  /* scatter arrays to other processes */
   /*  
   ** MPI_Scatter (
   ** void* send_data,                array of data residing on MASTER
@@ -478,12 +518,19 @@ int initialise(const char* paramfile, const char* obstaclefile,
   ** MPI_Comm communicator           communicator in which these processes reside
   ** )
   */
-
-  /*
-  ** allocate space to hold a record of the avarage velocities computed
-  ** at each timestep
+  /* size_t obstacles_size = sizeof(*obstacles_ptr) / sizeof((*obstacles_ptr)[0]);
+  ** printf("obstacles_size: %lu\n", obstacles_size);
+  ** MPI_Scatter(&obstacles_ptr, obstacles_size/size, MPI_FLOAT, &obstacles_ptr, obstacles_size/size, MPI_FLOAT, MASTER, MPI_COMM_WORLD);
   */
-  *av_vels_ptr = (float*)malloc(sizeof(float) * params->maxIters);
+  /* MPI_Scatter(&obstacles_ptr, obstacles_size/size, MPI_FLOAT, &total_obstacles_ptr, obstacles_size/size, MPI_FLOAT, MASTER, MPI_COMM_WORLD); */
+
+  #ifdef DEBUG_init_checkpoints
+  printf("Rank %d Checkpoint20\n", rank);
+  #endif
+
+  #ifdef DEBUG_init_checkpoints
+  printf("Rank %d Checkpoint30\n", rank);
+  #endif
 
   return EXIT_SUCCESS;
 }
