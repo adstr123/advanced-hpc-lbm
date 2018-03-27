@@ -4,4 +4,7 @@ initial (MPI Initialised)
 	- Elapsed user CPU time:          28.518234 (s)
 	- Elapsed system CPU time:        0.007999 (s)
 
-	
+- initialise() adjusted to split into local row sizes
+- initialise() adjusted to keep local and total obstacles and create buffers
+- above and below ranks calculated
+- 
